@@ -44,6 +44,7 @@ This comprehensive guide covers the following deployment scenarios for a Spring 
 
 ```bash
 mkdir -p springmvc-hello-world/src/main/java/com/example/controller
+mkdir -p springmvc-hello-world/src/main/java/com/example/config
 mkdir -p springmvc-hello-world/src/main/webapp/WEB-INF/views
 mkdir -p springmvc-hello-world/src/main/webapp/WEB-INF
 cd springmvc-hello-world
@@ -437,9 +438,9 @@ FROM amazonlinux:2023
 LABEL maintainer="your-email@example.com"
 LABEL description="Spring MVC Hello World on Tomcat 10.1.49 with Amazon Corretto 17"
 
-# Install Amazon Corretto 17
+# Install Amazon Corretto 17 and required tools
 RUN yum update -y && \
-    yum install -y java-17-amazon-corretto-devel wget tar && \
+    yum install -y java-17-amazon-corretto-devel wget tar curl && \
     yum clean all
 
 # Verify Java installation
@@ -495,6 +496,14 @@ target/
 .mvn/
 mvnw
 mvnw.cmd
+.idea/
+.vscode/
+.settings/
+*.iml
+.DS_Store
+*.log
+.env
+.env.*
 ```
 
 #### Step 1.2.1: Build Docker Image Locally
