@@ -30,9 +30,430 @@ This comprehensive guide covers the following deployment scenarios for a Spring 
 - AWS Account with appropriate permissions
 - AWS CLI installed and configured
 - Docker installed locally
+- Maven 3.6+ installed
+- Java 17 (Amazon Corretto recommended)
 - Basic understanding of Spring MVC, JSP, and Servlets
 - Git installed
-- Text editor or IDE
+- Text editor or IDE (VS Code, IntelliJ IDEA, or Eclipse)
+
+---
+
+## Section 0: AWS Environment Setup
+
+Before deploying to AWS ECS, you need to set up your AWS environment properly. This section guides you through AWS account setup, IAM configuration, and CLI installation.
+
+### 0.1 AWS Account Setup
+
+#### Step 0.1.1: Create AWS Account (if you don't have one)
+
+1. Go to [https://aws.amazon.com](https://aws.amazon.com)
+2. Click "Create an AWS Account"
+3. Follow the registration process:
+   - Provide email address and account name
+   - Enter payment information (required even for free tier)
+   - Verify identity via phone
+   - Select support plan (Basic/Free is sufficient for learning)
+
+#### Step 0.1.2: Enable MFA (Multi-Factor Authentication)
+
+Security best practice - protect your root account:
+
+1. Sign in to AWS Console: [https://console.aws.amazon.com](https://console.aws.amazon.com)
+2. Click your account name (top right) → Security Credentials
+3. Under "Multi-factor authentication (MFA)", click "Activate MFA"
+4. Choose MFA device type:
+   - **Authenticator app** (recommended): Use Google Authenticator, Authy, or Microsoft Authenticator
+   - **Security key**: Physical FIDO security key
+   - **Hardware TOTP token**: Physical device
+5. Follow the setup wizard to complete MFA activation
+
+### 0.2 IAM User Setup
+
+**Important:** Never use your root account for daily operations. Create an IAM user instead.
+
+#### Step 0.2.1: Create IAM Admin User
+
+1. In AWS Console, go to **IAM** service
+2. Click **Users** → **Add users**
+3. Configure user:
+   - **User name**: `ecs-admin` (or your preferred name)
+   - **Access type**: Select both:
+     - ✅ Programmatic access (for AWS CLI)
+     - ✅ AWS Management Console access
+   - Set console password (custom or auto-generated)
+   - ✅ Require password reset (optional)
+4. Click **Next: Permissions**
+
+#### Step 0.2.2: Attach Permissions
+
+For this tutorial, attach these managed policies:
+
+1. Click **Attach existing policies directly**
+2. Search and select the following policies:
+   - ✅ `AmazonECS_FullAccess` - ECS operations
+   - ✅ `AmazonEC2ContainerRegistryFullAccess` - ECR operations
+   - ✅ `AmazonVPCFullAccess` - VPC and networking
+   - ✅ `IAMFullAccess` - IAM role creation
+   - ✅ `CloudWatchLogsFullAccess` - CloudWatch logs
+   - ✅ `ElasticLoadBalancingFullAccess` - ALB operations
+   - ✅ `CloudFrontFullAccess` - CloudFront operations (for later sections)
+
+3. Click **Next: Tags** (optional, skip for now)
+4. Click **Next: Review**
+5. Click **Create user**
+
+#### Step 0.2.3: Save Credentials
+
+**CRITICAL:** Save these credentials immediately - you won't see them again!
+
+1. Download the CSV file containing:
+   - Access key ID
+   - Secret access key
+   - Console login link
+2. Store securely (use a password manager)
+3. Click **Close**
+
+#### Step 0.2.4: Enable MFA for IAM User
+
+1. Click on the newly created user
+2. Go to **Security credentials** tab
+3. Under **Multi-factor authentication (MFA)**, click **Manage**
+4. Follow the same MFA setup process as for root account
+
+### 0.3 AWS CLI Installation and Configuration
+
+#### Step 0.3.1: Install AWS CLI
+
+**For Linux (Amazon Linux 2023, Ubuntu, Debian):**
+```bash
+# Download AWS CLI v2
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+
+# Install unzip if not present
+sudo yum install -y unzip  # Amazon Linux/RHEL/CentOS
+# OR
+sudo apt-get install -y unzip  # Ubuntu/Debian
+
+# Unzip and install
+unzip awscliv2.zip
+sudo ./aws/install
+
+# Verify installation
+aws --version
+```
+
+**For macOS:**
+```bash
+# Using Homebrew (recommended)
+brew install awscli
+
+# OR download installer
+curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "AWSCLIV2.pkg"
+sudo installer -pkg AWSCLIV2.pkg -target /
+
+# Verify installation
+aws --version
+```
+
+**For Windows:**
+```powershell
+# Download and run the MSI installer from:
+# https://awscli.amazonaws.com/AWSCLIV2.msi
+
+# After installation, verify in PowerShell or CMD:
+aws --version
+```
+
+#### Step 0.3.2: Configure AWS CLI
+
+Configure AWS CLI with your IAM user credentials:
+
+```bash
+aws configure
+```
+
+You'll be prompted for:
+```
+AWS Access Key ID [None]: <paste your access key ID>
+AWS Secret Access Key [None]: <paste your secret access key>
+Default region name [None]: us-east-1
+Default output format [None]: json
+```
+
+**Region Selection Guide:**
+- `us-east-1` - US East (N. Virginia) - Most services, lowest cost
+- `us-west-2` - US West (Oregon) - Good alternative
+- `eu-west-1` - Europe (Ireland) - For EU users
+- `ap-southeast-1` - Asia Pacific (Singapore) - For Asia users
+
+#### Step 0.3.3: Verify AWS CLI Configuration
+
+Test your AWS CLI setup:
+
+```bash
+# Verify credentials and get account information
+aws sts get-caller-identity
+
+# Expected output:
+# {
+#     "UserId": "AIDAXXXXXXXXXXXXXXXXX",
+#     "Account": "123456789012",
+#     "Arn": "arn:aws:iam::123456789012:user/ecs-admin"
+# }
+
+# Test ECS access
+aws ecs list-clusters --region us-east-1
+
+# Test ECR access
+aws ecr describe-repositories --region us-east-1
+```
+
+If these commands work without errors, your AWS CLI is properly configured!
+
+#### Step 0.3.4: Configure Named Profiles (Optional)
+
+If you work with multiple AWS accounts:
+
+```bash
+# Configure additional profile
+aws configure --profile project-dev
+
+# Use specific profile
+aws ecs list-clusters --profile project-dev
+
+# Set default profile for current session
+export AWS_PROFILE=project-dev
+```
+
+### 0.4 Install Docker
+
+#### Step 0.4.1: Install Docker
+
+**For Amazon Linux 2023:**
+```bash
+sudo yum update -y
+sudo yum install -y docker
+sudo systemctl start docker
+sudo systemctl enable docker
+sudo usermod -a -G docker $USER
+
+# Log out and back in for group changes to take effect
+# OR run: newgrp docker
+
+# Verify
+docker --version
+docker run hello-world
+```
+
+**For Ubuntu/Debian:**
+```bash
+# Update package index
+sudo apt-get update
+
+# Install prerequisites
+sudo apt-get install -y ca-certificates curl gnupg lsb-release
+
+# Add Docker's official GPG key
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+# Set up repository
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Install Docker Engine
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+# Add user to docker group
+sudo usermod -aG docker $USER
+newgrp docker
+
+# Verify
+docker --version
+docker run hello-world
+```
+
+**For macOS:**
+```bash
+# Download Docker Desktop from:
+# https://www.docker.com/products/docker-desktop
+
+# OR using Homebrew
+brew install --cask docker
+
+# Start Docker Desktop application
+# Verify
+docker --version
+docker run hello-world
+```
+
+**For Windows:**
+```powershell
+# Download Docker Desktop from:
+# https://www.docker.com/products/docker-desktop
+
+# Install and restart computer
+# Verify in PowerShell:
+docker --version
+docker run hello-world
+```
+
+### 0.5 Install Maven
+
+#### Step 0.5.1: Install Maven
+
+**For Amazon Linux 2023:**
+```bash
+sudo yum install -y maven
+mvn --version
+```
+
+**For Ubuntu/Debian:**
+```bash
+sudo apt-get update
+sudo apt-get install -y maven
+mvn --version
+```
+
+**For macOS:**
+```bash
+brew install maven
+mvn --version
+```
+
+**For Windows:**
+```powershell
+# Download from: https://maven.apache.org/download.cgi
+# Extract to C:\Program Files\Apache\maven
+# Add to PATH: C:\Program Files\Apache\maven\bin
+# Verify:
+mvn --version
+```
+
+### 0.6 Install Java 17 (Amazon Corretto)
+
+#### Step 0.6.1: Install Amazon Corretto 17
+
+**For Amazon Linux 2023:**
+```bash
+sudo yum install -y java-17-amazon-corretto-devel
+java -version
+javac -version
+```
+
+**For Ubuntu/Debian:**
+```bash
+wget -O- https://apt.corretto.aws/corretto.key | sudo apt-key add -
+sudo add-apt-repository 'deb https://apt.corretto.aws stable main'
+sudo apt-get update
+sudo apt-get install -y java-17-amazon-corretto-jdk
+java -version
+javac -version
+```
+
+**For macOS:**
+```bash
+brew install --cask corretto17
+java -version
+javac -version
+```
+
+**For Windows:**
+```powershell
+# Download MSI installer from:
+# https://corretto.aws/downloads/latest/amazon-corretto-17-x64-windows-jdk.msi
+# Run installer
+# Verify:
+java -version
+javac -version
+```
+
+### 0.7 Environment Variables Setup
+
+Create a file to store your AWS environment variables:
+
+```bash
+# Create environment file
+cat > ~/.aws-ecs-env << 'EOF'
+# AWS Configuration
+export AWS_REGION="us-east-1"
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+# Project Configuration
+export PROJECT_NAME="springmvc-hello-world"
+export ECR_REPO_NAME="springmvc-hello-world"
+export ECS_CLUSTER_NAME="springmvc-cluster"
+export ECS_SERVICE_NAME="springmvc-service"
+
+# Computed values
+export ECR_REPO_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}"
+
+echo "AWS Environment loaded:"
+echo "  Region: ${AWS_REGION}"
+echo "  Account: ${AWS_ACCOUNT_ID}"
+echo "  ECR URI: ${ECR_REPO_URI}"
+EOF
+
+# Load environment variables
+source ~/.aws-ecs-env
+
+# Add to your shell profile for automatic loading
+echo "source ~/.aws-ecs-env" >> ~/.bashrc  # or ~/.zshrc for macOS
+```
+
+### 0.8 Verify Complete Setup
+
+Run this verification script:
+
+```bash
+#!/bin/bash
+echo "=== AWS ECS Environment Verification ==="
+echo ""
+
+# Check AWS CLI
+echo "1. AWS CLI:"
+aws --version && echo "   ✅ AWS CLI installed" || echo "   ❌ AWS CLI not found"
+echo ""
+
+# Check AWS credentials
+echo "2. AWS Credentials:"
+aws sts get-caller-identity > /dev/null 2>&1 && echo "   ✅ AWS credentials configured" || echo "   ❌ AWS credentials not configured"
+echo ""
+
+# Check Docker
+echo "3. Docker:"
+docker --version && echo "   ✅ Docker installed" || echo "   ❌ Docker not found"
+docker ps > /dev/null 2>&1 && echo "   ✅ Docker daemon running" || echo "   ❌ Docker daemon not running"
+echo ""
+
+# Check Maven
+echo "4. Maven:"
+mvn --version | head -1 && echo "   ✅ Maven installed" || echo "   ❌ Maven not found"
+echo ""
+
+# Check Java
+echo "5. Java:"
+java -version 2>&1 | head -1 && echo "   ✅ Java installed" || echo "   ❌ Java not found"
+echo ""
+
+# Check Git
+echo "6. Git:"
+git --version && echo "   ✅ Git installed" || echo "   ❌ Git not found"
+echo ""
+
+echo "=== Verification Complete ==="
+```
+
+Save this as `verify-setup.sh`, make it executable, and run it:
+
+```bash
+chmod +x verify-setup.sh
+./verify-setup.sh
+```
+
+All items should show ✅. If any show ❌, revisit that section.
 
 ---
 
@@ -44,6 +465,7 @@ This comprehensive guide covers the following deployment scenarios for a Spring 
 
 ```bash
 mkdir -p springmvc-hello-world/src/main/java/com/example/controller
+mkdir -p springmvc-hello-world/src/main/java/com/example/config
 mkdir -p springmvc-hello-world/src/main/webapp/WEB-INF/views
 mkdir -p springmvc-hello-world/src/main/webapp/WEB-INF
 cd springmvc-hello-world
@@ -437,9 +859,9 @@ FROM amazonlinux:2023
 LABEL maintainer="your-email@example.com"
 LABEL description="Spring MVC Hello World on Tomcat 10.1.49 with Amazon Corretto 17"
 
-# Install Amazon Corretto 17
+# Install Amazon Corretto 17 and required tools
 RUN yum update -y && \
-    yum install -y java-17-amazon-corretto-devel wget tar && \
+    yum install -y java-17-amazon-corretto-devel wget tar curl && \
     yum clean all
 
 # Verify Java installation
@@ -495,6 +917,14 @@ target/
 .mvn/
 mvnw
 mvnw.cmd
+.idea/
+.vscode/
+.settings/
+*.iml
+.DS_Store
+*.log
+.env
+.env.*
 ```
 
 #### Step 1.2.1: Build Docker Image Locally
